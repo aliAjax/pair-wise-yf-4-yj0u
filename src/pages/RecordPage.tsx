@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react'
-import { Bus, MapPin, Armchair, Clock, CloudSun, Signpost, TreePine, Users, FileText, Send } from 'lucide-react'
+import { Bus, MapPin, Armchair, Clock, CloudSun, Signpost, TreePine, Users, FileText, Send, CalendarClock, CircleAlert } from 'lucide-react'
 import { useSceneStore } from '@/store/useSceneStore'
+import { useScheduleStore } from '@/store/useScheduleStore'
 import { getWeatherIcon, getTreeIcon, getPedestrianIcon, formatTimestamp } from '@/utils/sceneHelpers'
+import { getUpcomingWindows, formatTripDate } from '@/utils/scheduleHelpers'
 import type { SceneFormData, Weather, TreeDensity, PedestrianStatus, SeatDirection } from '@/types'
 
 const WEATHERS: Weather[] = ['晴', '多云', '阴', '小雨', '大雨', '雪', '雾']
@@ -22,11 +24,12 @@ const initialForm: SceneFormData = {
 export default function RecordPage() {
   const saveScene = useSceneStore((s) => s.saveScene)
   const loadAll = useSceneStore((s) => s.loadAll)
+  const { schedules, tripRecords, loadAll: loadSchedules } = useScheduleStore()
   const [form, setForm] = useState<SceneFormData>(initialForm)
   const [now, setNow] = useState(new Date())
-  const [showSuccess, setShowSuccess] = useState(false)
+  const [successText, setSuccessText] = useState<string | null>(null)
 
-  useEffect(() => { loadAll() }, [loadAll])
+  useEffect(() => { loadAll(); loadSchedules() }, [loadAll, loadSchedules])
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 30000)
@@ -36,23 +39,31 @@ export default function RecordPage() {
   const update = <K extends keyof SceneFormData>(key: K, val: SceneFormData[K]) =>
     setForm((prev) => ({ ...prev, [key]: val }))
 
+  const schedule = schedules.find((s) => s.routeName === form.routeName.trim())
+  const upcomingTrips = schedule ? getUpcomingWindows(schedule, now, 3) : []
+  const pendingMissed = schedule
+    ? tripRecords.filter((r) => r.scheduleId === schedule.id && r.status === 'missed' && !r.missReason).length
+    : 0
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    saveScene(form)
-    setShowSuccess(true)
+    const trip = saveScene(form)
+    setSuccessText(
+      trip ? `记录已保存 · 已挂到${formatTripDate(trip.date)} ${trip.startTime} 趟` : '记录已保存'
+    )
     setTimeout(() => {
-      setShowSuccess(false)
+      setSuccessText(null)
       setForm(initialForm)
     }, 1500)
   }
 
   return (
     <div className="relative min-h-screen bg-teal-950 p-4 pb-24">
-      {showSuccess && (
+      {successText && (
         <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
           <div className="animate-bounce flex flex-col items-center gap-2 opacity-0" style={{ animation: 'fadeInUp 1.5s ease forwards' }}>
             <Bus className="w-16 h-16 text-dusk-400" />
-            <span className="text-mist-100 font-serif text-lg">记录已保存</span>
+            <span className="text-mist-100 font-serif text-lg">{successText}</span>
           </div>
           <style>{`@keyframes fadeInUp { 0% { opacity:0; transform:translateY(20px) } 40% { opacity:1; transform:translateY(0) } 100% { opacity:0; transform:translateY(-40px) } }`}</style>
         </div>
@@ -90,6 +101,43 @@ export default function RecordPage() {
             </div>
           </div>
         </section>
+
+        {schedule && (
+          <section className="rounded-2xl border border-dusk-400/25 bg-teal-900/40 p-4 space-y-2">
+            <h2 className="text-dusk-300 text-xs flex items-center gap-1.5">
+              <CalendarClock className="w-3.5 h-3.5" />接下来三趟
+            </h2>
+            <ul className="space-y-1.5">
+              {upcomingTrips.map((t) => {
+                const ongoing = now >= t.startAt && now < t.endAt
+                return (
+                  <li
+                    key={t.key}
+                    className={`flex items-center justify-between rounded-lg px-3 py-2 text-xs ${
+                      ongoing ? 'bg-dusk-400/15 text-dusk-300' : 'bg-teal-850/60 text-mist-300'
+                    }`}
+                  >
+                    <span>{formatTripDate(t.date)}</span>
+                    <span className="flex items-center gap-2">
+                      {t.startTime}–{t.endTime}
+                      {ongoing && (
+                        <span className="rounded-full bg-dusk-400/25 px-2 py-0.5 text-[10px] text-dusk-200">
+                          进行中 · 保存自动挂本趟
+                        </span>
+                      )}
+                    </span>
+                  </li>
+                )
+              })}
+            </ul>
+            {pendingMissed > 0 && (
+              <p className="flex items-center gap-1.5 text-[11px] text-dusk-300/80">
+                <CircleAlert className="w-3 h-3" />
+                有 {pendingMissed} 趟漏采待补录，可到时间线挑选补填原因
+              </p>
+            )}
+          </section>
+        )}
 
         <section className="space-y-3">
           <h2 className="text-dusk-400 font-serif text-lg flex items-center gap-2">

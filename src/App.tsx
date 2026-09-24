@@ -3,6 +3,7 @@ import Layout from '@/components/Layout'
 import RecordPage from '@/pages/RecordPage'
 import TimelinePage from '@/pages/TimelinePage'
 import InspirePage from '@/pages/InspirePage'
+import SchedulePage from '@/pages/SchedulePage'
 
 export default function App() {
   return (
@@ -10,6 +11,7 @@ export default function App() {
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<RecordPage />} />
+          <Route path="/schedule" element={<SchedulePage />} />
           <Route path="/timeline" element={<TimelinePage />} />
           <Route path="/inspire" element={<InspirePage />} />
         </Route>
