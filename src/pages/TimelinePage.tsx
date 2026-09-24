@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Search, Route, X, Trash2, Clock, MapPin } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Search, Route, X, Trash2, Clock, MapPin, CircleSlash, ClipboardCheck } from 'lucide-react'
 import { useSceneStore } from '@/store/useSceneStore'
 import {
   formatTimestamp,
@@ -8,30 +8,79 @@ import {
   getTreeIcon,
   getPedestrianIcon,
 } from '@/utils/sceneHelpers'
-import type { WindowScene } from '@/types'
+import { formatTripDate, formatTripTime } from '@/utils/scheduleHelpers'
+import type { WindowScene, ScheduledTrip } from '@/types'
+import BackfillDialog from '@/components/BackfillDialog'
+
+type TimelineEntry =
+  | { kind: 'scene'; time: number; data: WindowScene }
+  | { kind: 'trip'; time: number; data: ScheduledTrip }
 
 export default function TimelinePage() {
-  const { routeNames, selectedRoute, currentRouteScenes, selectRoute, loadAll, deleteScene } =
-    useSceneStore()
+  const {
+    scenes,
+    routeNames,
+    selectedRoute,
+    currentRouteScenes,
+    selectRoute,
+    loadAll,
+    deleteScene,
+    trips,
+    backfillTrip,
+  } = useSceneStore()
   const [search, setSearch] = useState('')
   const [detailScene, setDetailScene] = useState<WindowScene | null>(null)
+  const [backfillTarget, setBackfillTarget] = useState<ScheduledTrip | null>(null)
 
   useEffect(() => {
     loadAll()
   }, [loadAll])
 
-  const filteredRoutes = routeNames.filter((r) =>
+  // 排了日程但还没有窗景的线路，也出现在筛选标签里
+  const allRouteNames = useMemo(() => {
+    const set = new Set(routeNames)
+    trips.forEach((t) => set.add(t.routeName))
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'zh'))
+  }, [routeNames, trips])
+
+  const filteredRoutes = allRouteNames.filter((r) =>
     r.toLowerCase().includes(search.toLowerCase())
   )
 
-  const sorted = [...currentRouteScenes].sort(
-    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-  )
+  // 合并窗景与趟次：漏采/已补录的趟次作为缺口卡片，按结束时间插入
+  const entries = useMemo<TimelineEntry[]>(() => {
+    const result: TimelineEntry[] = []
+
+    const sceneSource = selectedRoute
+      ? currentRouteScenes
+      : [...scenes].sort(
+          (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+        )
+    sceneSource.forEach((s) =>
+      result.push({ kind: 'scene', time: new Date(s.timestamp).getTime(), data: s })
+    )
+
+    const relevantTrips = trips.filter(
+      (t) => (t.status === 'missed' || t.status === 'backfilled') &&
+        (!selectedRoute || t.routeName === selectedRoute)
+    )
+    relevantTrips.forEach((t) =>
+      result.push({ kind: 'trip', time: new Date(t.endsAt).getTime(), data: t })
+    )
+
+    return result.sort((a, b) => b.time - a.time)
+  }, [scenes, currentRouteScenes, selectedRoute, trips])
 
   const handleDelete = (id: string) => {
     deleteScene(id)
     setDetailScene(null)
   }
+
+  const sceneTripMap = useMemo(() => {
+    const map = new Map<string, ScheduledTrip>()
+    trips.forEach((t) => map.set(t.id, t))
+    return map
+  }, [trips])
 
   return (
     <div className="min-h-screen bg-teal-950 font-serif text-mist-100">
@@ -79,7 +128,7 @@ export default function TimelinePage() {
           </div>
         </div>
 
-        {sorted.length === 0 ? (
+        {entries.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-mist-400">
             <div className="mb-4 text-6xl opacity-30">🪟</div>
             <p className="text-lg">
@@ -90,50 +139,22 @@ export default function TimelinePage() {
           <div className="relative pl-8">
             <div className="absolute left-3 top-0 bottom-0 w-px bg-teal-800" />
             <div className="space-y-6">
-              {sorted.map((scene) => (
-                <div key={scene.id} className="relative flex gap-4">
-                  <div className="absolute -left-5 top-1 h-2.5 w-2.5 rounded-full bg-dusk-400 ring-4 ring-teal-950" />
-                  <div className="w-20 shrink-0 pt-0.5 text-right">
-                    <p className="text-xs text-dusk-400">
-                      {formatTimestamp(scene.timestamp)}
-                    </p>
-                    <p className="mt-0.5 text-[10px] text-mist-500">
-                      {getTimeOfDay(scene.timestamp)}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => setDetailScene(scene)}
-                    className="group flex-1 rounded-xl border border-teal-800 bg-teal-900/50 p-4 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-dusk-400/40 hover:shadow-lg hover:shadow-dusk-400/10"
-                  >
-                    <div className="flex items-center gap-2 mb-2">
-                      {getWeatherIcon(scene.weather)}
-                      <span className="text-sm font-semibold text-mist-100">
-                        {scene.segment}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1 mb-1.5 text-mist-400">
-                      <MapPin className="w-3 h-3" />
-                      <span className="text-xs">{scene.routeName}</span>
-                      <span className="mx-1 text-teal-700">·</span>
-                      <span className="text-xs">{scene.seatDirection}侧</span>
-                    </div>
-                    {scene.note && (
-                      <p className="text-xs text-mist-400 line-clamp-2">
-                        {scene.note}
-                      </p>
-                    )}
-                    <div className="mt-2 flex items-center gap-2">
-                      {getTreeIcon(scene.treeDensity)}
-                      {getPedestrianIcon(scene.pedestrianStatus)}
-                      {scene.signText && (
-                        <span className="rounded bg-teal-800/60 px-1.5 py-0.5 text-[10px] text-mist-300">
-                          {scene.signText}
-                        </span>
-                      )}
-                    </div>
-                  </button>
-                </div>
-              ))}
+              {entries.map((entry) =>
+                entry.kind === 'scene' ? (
+                  <SceneTimelineItem
+                    key={`scene-${entry.data.id}`}
+                    scene={entry.data}
+                    trip={entry.data.tripId ? sceneTripMap.get(entry.data.tripId) : undefined}
+                    onClick={() => setDetailScene(entry.data)}
+                  />
+                ) : (
+                  <MissedTimelineItem
+                    key={`trip-${entry.data.id}`}
+                    trip={entry.data}
+                    onBackfill={() => setBackfillTarget(entry.data)}
+                  />
+                )
+              )}
             </div>
           </div>
         )}
@@ -173,6 +194,13 @@ export default function TimelinePage() {
                 <span className="text-teal-600">·</span>
                 <span>{getTimeOfDay(detailScene.timestamp)}</span>
               </div>
+              {detailScene.tripId && sceneTripMap.get(detailScene.tripId) && (
+                <div className="flex items-center gap-1.5 rounded-lg bg-dusk-400/10 px-2.5 py-1.5 text-xs text-dusk-300">
+                  <Route className="w-3.5 h-3.5" />
+                  属于 {formatTripDate(sceneTripMap.get(detailScene.tripId)!.date)}{' '}
+                  {formatTripTime(sceneTripMap.get(detailScene.tripId)!.start)} 趟次
+                </div>
+              )}
               <div className="flex items-center gap-3 text-mist-300">
                 {getTreeIcon(detailScene.treeDensity)}
                 <span>{detailScene.treeDensity}</span>
@@ -201,6 +229,131 @@ export default function TimelinePage() {
           </div>
         </div>
       )}
+
+      <BackfillDialog
+        trip={backfillTarget}
+        onClose={() => setBackfillTarget(null)}
+        onSubmit={backfillTrip}
+      />
+    </div>
+  )
+}
+
+function SceneTimelineItem({
+  scene,
+  trip,
+  onClick,
+}: {
+  scene: WindowScene
+  trip?: ScheduledTrip
+  onClick: () => void
+}) {
+  return (
+    <div className="relative flex gap-4">
+      <div className="absolute -left-5 top-1 h-2.5 w-2.5 rounded-full bg-dusk-400 ring-4 ring-teal-950" />
+      <div className="w-20 shrink-0 pt-0.5 text-right">
+        <p className="text-xs text-dusk-400">{formatTimestamp(scene.timestamp)}</p>
+        <p className="mt-0.5 text-[10px] text-mist-500">{getTimeOfDay(scene.timestamp)}</p>
+      </div>
+      <button
+        onClick={onClick}
+        className="group flex-1 rounded-xl border border-teal-800 bg-teal-900/50 p-4 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-dusk-400/40 hover:shadow-lg hover:shadow-dusk-400/10"
+      >
+        <div className="flex items-center gap-2 mb-2">
+          {getWeatherIcon(scene.weather)}
+          <span className="text-sm font-semibold text-mist-100">{scene.segment}</span>
+          {trip && (
+            <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-dusk-400/10 px-2 py-0.5 text-[10px] text-dusk-300">
+              <Route className="w-3 h-3" />
+              {formatTripTime(trip.start)} 趟
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-1 mb-1.5 text-mist-400">
+          <MapPin className="w-3 h-3" />
+          <span className="text-xs">{scene.routeName}</span>
+          <span className="mx-1 text-teal-700">·</span>
+          <span className="text-xs">{scene.seatDirection}侧</span>
+        </div>
+        {scene.note && (
+          <p className="text-xs text-mist-400 line-clamp-2">{scene.note}</p>
+        )}
+        <div className="mt-2 flex items-center gap-2">
+          {getTreeIcon(scene.treeDensity)}
+          {getPedestrianIcon(scene.pedestrianStatus)}
+          {scene.signText && (
+            <span className="rounded bg-teal-800/60 px-1.5 py-0.5 text-[10px] text-mist-300">
+              {scene.signText}
+            </span>
+          )}
+        </div>
+      </button>
+    </div>
+  )
+}
+
+function MissedTimelineItem({
+  trip,
+  onBackfill,
+}: {
+  trip: ScheduledTrip
+  onBackfill: () => void
+}) {
+  const backfilled = trip.status === 'backfilled'
+  return (
+    <div className="relative flex gap-4">
+      <div
+        className={`absolute -left-[21px] top-2 h-3 w-3 rounded-full ring-4 ring-teal-950 ${
+          backfilled ? 'bg-teal-600' : 'bg-red-700'
+        }`}
+      />
+      <div className="w-20 shrink-0 pt-1 text-right">
+        <p className="text-xs text-mist-500">{formatTripDate(trip.date)}</p>
+        <p className="mt-0.5 text-[10px] text-mist-600">
+          {formatTripTime(trip.start)}–{formatTripTime(trip.end)}
+        </p>
+      </div>
+      <div
+        className={`flex-1 rounded-xl border border-dashed p-4 ${
+          backfilled
+            ? 'border-teal-700 bg-teal-900/30'
+            : 'border-red-900/50 bg-red-950/15'
+        }`}
+      >
+        <div className="flex items-center gap-2 mb-1.5">
+          {backfilled ? (
+            <ClipboardCheck className="w-4 h-4 text-teal-500" />
+          ) : (
+            <CircleSlash className="w-4 h-4 text-red-500" />
+          )}
+          <span
+            className={`text-sm font-medium ${
+              backfilled ? 'text-mist-300' : 'text-red-300'
+            }`}
+          >
+            {backfilled ? '已补录的漏采' : '漏采一趟'}
+          </span>
+          <span className="ml-auto text-xs text-mist-500">
+            <MapPin className="mr-1 inline w-3 h-3" />
+            {trip.routeName}
+          </span>
+        </div>
+        {backfilled ? (
+          <p className="text-xs leading-relaxed text-mist-400">
+            原因：{trip.reason}
+          </p>
+        ) : (
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs text-mist-500">这趟没有留下窗景</p>
+            <button
+              onClick={onBackfill}
+              className="shrink-0 rounded-lg bg-red-900/30 px-2.5 py-1 text-xs text-red-200 hover:bg-red-900/50 transition"
+            >
+              补录原因
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

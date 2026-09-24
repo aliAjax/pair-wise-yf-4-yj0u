@@ -1,4 +1,5 @@
 import type { WindowScene } from '@/types'
+import { attachSceneToTrip, detachSceneFromTrip } from './schedule'
 
 const STORAGE_KEY = 'bus_window_scenes'
 
@@ -12,13 +13,19 @@ export function getAllScenes(): WindowScene[] {
   }
 }
 
-export function saveScene(scene: WindowScene): void {
+export function saveScene(scene: WindowScene, tripId?: string): void {
   const scenes = getAllScenes()
+  if (tripId) {
+    scene.tripId = tripId
+    attachSceneToTrip(tripId, scene.id)
+  }
   scenes.push(scene)
   localStorage.setItem(STORAGE_KEY, JSON.stringify(scenes))
 }
 
 export function deleteScene(id: string): void {
+  const scene = getAllScenes().find((s) => s.id === id)
+  if (scene?.tripId) detachSceneFromTrip(scene.tripId, id)
   const scenes = getAllScenes().filter((s) => s.id !== id)
   localStorage.setItem(STORAGE_KEY, JSON.stringify(scenes))
 }

@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "check": "tsc -b --noEmit"
+    "check": "tsc -b --noEmit",
+    "test:smoke": "esbuild scripts/smoke.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=scripts/.smoke.bundle.mjs --inject:scripts/localStorageShim.ts && node scripts/.smoke.bundle.mjs; rm -f scripts/.smoke.bundle.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",
